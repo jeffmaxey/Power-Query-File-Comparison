@@ -1,4 +1,4 @@
-Yes. I would make the parameterization more comprehensive and also correct one limitation in the prior design: **standard `Excel.Workbook()` exposes worksheet data/values, not the underlying cell formulas or formatting**, so `CompareFormulas` and `CompareFormatting` cannot honestly be implemented as native `Excel.Workbook` comparisons. Microsoft documents `Excel.Workbook` as returning workbook contents/data, with options such as `DelayTypes` and `InferSheetDimensions`; it does not expose a formula/formatting object model. ([Microsoft Learn][1])
+Make the parameterization more comprehensive and also correct one limitation in the prior design: **standard `Excel.Workbook()` exposes worksheet data/values, not the underlying cell formulas or formatting**, so `CompareFormulas` and `CompareFormatting` cannot honestly be implemented as native `Excel.Workbook` comparisons. Microsoft documents `Excel.Workbook` as returning workbook contents/data, with options such as `DelayTypes` and `InferSheetDimensions`; it does not expose a formula/formatting object model. ([Microsoft Learn][1])
 
 The revised version below therefore implements the configurable **value comparison engine** fully, while adding configuration hooks for formula/format comparison and explicitly reporting those capabilities as unsupported rather than producing misleading results.
 
@@ -1720,3 +1720,309 @@ This is substantially more scalable than the original version because **file dis
 
 [1]: https://learn.microsoft.com/en-us/powerquery-m/excel-workbook?utm_source=chatgpt.com "Excel.Workbook - PowerQuery M | Microsoft Learn"
 [2]: https://learn.microsoft.com/en-us/power-query/connectors/excel?utm_source=chatgpt.com "Power Query Excel connector - Power Query | Microsoft Learn"
+
+
+# Updates
+Remove both parameters entirely. The streamlined configuration is:
+
+| Parameter                | Value                |
+| ------------------------ | -------------------- |
+| Folder1                  | `C:\Model\Version_A` |
+| Folder2                  | `C:\Model\Version_B` |
+| CompareHiddenSheets      | `FALSE`              |
+| IgnoreBlankCells         | `TRUE`               |
+| CompareValues            | `TRUE`               |
+| CaseSensitive            | `FALSE`              |
+| TrimText                 | `TRUE`               |
+| TreatNullAndBlankAsEqual | `TRUE`               |
+| InferSheetDimensions     | `FALSE`              |
+| FileExtensions           | `.xlsx,.xlsm,.xlsb`  |
+
+### Updated `Parameters`
+
+Use this version in place of the previous one:
+
+```powerquery id="6n1p4v"
+let
+    Source =
+        Excel.CurrentWorkbook(){[Name="tblParameters"]}[Content],
+
+    Typed =
+        Table.TransformColumnTypes(
+            Source,
+            {
+                {"Parameter", type text},
+                {"Value", type text}
+            }
+        ),
+
+    Clean =
+        Table.TransformColumns(
+            Typed,
+            {
+                {
+                    "Parameter",
+                    each Text.Trim(_),
+                    type text
+                },
+                {
+                    "Value",
+                    each Text.Trim(_),
+                    type text
+                }
+            }
+        ),
+
+    GetText =
+        (ParameterName as text, optional Default as nullable text) as text =>
+        let
+            Matches =
+                Table.SelectRows(
+                    Clean,
+                    each
+                        Text.Upper([Parameter])
+                        =
+                        Text.Upper(ParameterName)
+                )
+        in
+            if Table.RowCount(Matches) = 0 then
+                if Default <> null then
+                    Default
+                else
+                    error
+                        "Missing parameter: "
+                        & ParameterName
+            else
+                Matches{0}[Value],
+
+    GetLogical =
+        (
+            ParameterName as text,
+            optional Default as nullable logical
+        ) as logical =>
+        let
+            Raw =
+                GetText(
+                    ParameterName,
+                    if Default = null
+                    then null
+                    else if Default
+                    then "TRUE"
+                    else "FALSE"
+                ),
+
+            Upper =
+                Text.Upper(Raw)
+        in
+            if List.Contains(
+                {"TRUE", "YES", "Y", "1"},
+                Upper
+            )
+            then
+                true
+
+            else if List.Contains(
+                {"FALSE", "NO", "N", "0"},
+                Upper
+            )
+            then
+                false
+
+            else
+                error
+                    "Parameter '"
+                    & ParameterName
+                    & "' must be TRUE or FALSE.",
+
+    Folder1 =
+        GetText("Folder1"),
+
+    Folder2 =
+        GetText("Folder2"),
+
+    CompareHiddenSheets =
+        GetLogical(
+            "CompareHiddenSheets",
+            false
+        ),
+
+    IgnoreBlankCells =
+        GetLogical(
+            "IgnoreBlankCells",
+            true
+        ),
+
+    CompareValues =
+        GetLogical(
+            "CompareValues",
+            true
+        ),
+
+    CaseSensitive =
+        GetLogical(
+            "CaseSensitive",
+            false
+        ),
+
+    TrimText =
+        GetLogical(
+            "TrimText",
+            true
+        ),
+
+    TreatNullAndBlankAsEqual =
+        GetLogical(
+            "TreatNullAndBlankAsEqual",
+            true
+        ),
+
+    InferSheetDimensions =
+        GetLogical(
+            "InferSheetDimensions",
+            false
+        ),
+
+    ExtensionText =
+        GetText(
+            "FileExtensions",
+            ".xlsx,.xlsm,.xlsb"
+        ),
+
+    FileExtensions =
+        List.Transform(
+            Text.Split(
+                ExtensionText,
+                ","
+            ),
+            each
+                Text.Lower(
+                    Text.Trim(_)
+                )
+        ),
+
+    Output =
+        [
+            Folder1 = Folder1,
+            Folder2 = Folder2,
+            CompareHiddenSheets =
+                CompareHiddenSheets,
+            IgnoreBlankCells =
+                IgnoreBlankCells,
+            CompareValues =
+                CompareValues,
+            CaseSensitive =
+                CaseSensitive,
+            TrimText =
+                TrimText,
+            TreatNullAndBlankAsEqual =
+                TreatNullAndBlankAsEqual,
+            InferSheetDimensions =
+                InferSheetDimensions,
+            FileExtensions =
+                FileExtensions
+        ]
+in
+    Output
+```
+
+### Updated `Configuration`
+
+The visible configuration query should also remove them:
+
+```powerquery id="ypj6cw"
+let
+    P =
+        Parameters,
+
+    Output =
+        #table(
+            {
+                "Parameter",
+                "Value"
+            },
+            {
+                {
+                    "Folder 1",
+                    P[Folder1]
+                },
+                {
+                    "Folder 2",
+                    P[Folder2]
+                },
+                {
+                    "Compare Hidden Sheets",
+                    Text.From(
+                        P[CompareHiddenSheets]
+                    )
+                },
+                {
+                    "Ignore Blank Cells",
+                    Text.From(
+                        P[IgnoreBlankCells]
+                    )
+                },
+                {
+                    "Compare Values",
+                    Text.From(
+                        P[CompareValues]
+                    )
+                },
+                {
+                    "Case Sensitive",
+                    Text.From(
+                        P[CaseSensitive]
+                    )
+                },
+                {
+                    "Trim Text",
+                    Text.From(
+                        P[TrimText]
+                    )
+                },
+                {
+                    "Null = Blank",
+                    Text.From(
+                        P[TreatNullAndBlankAsEqual]
+                    )
+                },
+                {
+                    "Infer Sheet Dimensions",
+                    Text.From(
+                        P[InferSheetDimensions]
+                    )
+                },
+                {
+                    "File Extensions",
+                    Text.Combine(
+                        P[FileExtensions],
+                        ", "
+                    )
+                }
+            }
+        )
+in
+    Output
+```
+
+### Updated `tblParameters`
+
+The Excel table should now contain only:
+
+```text
+Parameter                  Value
+-------------------------  -------------------------
+Folder1                    C:\Model\Version_A
+Folder2                    C:\Model\Version_B
+CompareHiddenSheets        FALSE
+IgnoreBlankCells           TRUE
+CompareValues              TRUE
+CaseSensitive              FALSE
+TrimText                   TRUE
+TreatNullAndBlankAsEqual   TRUE
+InferSheetDimensions       FALSE
+FileExtensions             .xlsx,.xlsm,.xlsb
+```
+
+No other queries need to reference `CompareFormulas` or `CompareFormatting`, so the remaining `File Inventory`, `File Comparison`, `Sheet Inventory`, `Sheet Comparison`, `fxNormalizeValue`, `fxCompareSheets`, `Cell Differences`, and `Summary` queries can remain as previously provided.
+
+
